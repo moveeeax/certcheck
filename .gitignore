@@ -1,0 +1,15 @@
+# Virtual environments
+venv/
+.venv/
+certcheck-venv/
+
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
