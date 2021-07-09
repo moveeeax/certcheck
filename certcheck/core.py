@@ -10,6 +10,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
+VALID = "valid"
+EXPIRING = "expiring"
+EXPIRED = "expired"
+NOT_YET_VALID = "not_yet_valid"
+
 
 class CertParseError(ValueError):
     """Raised when a certificate dict cannot be understood."""
@@ -90,3 +95,66 @@ def parse_cert(cert: Dict) -> CertInfo:
         not_after=not_after,
         serial_number=cert.get("serialNumber"),
     )
+
+
+@dataclass
+class ExpiryStatus:
+    status: str
+    days_until_expiry: int
+    breach: bool
+    not_after: Optional[datetime] = None
+
+    @property
+    def expired(self) -> bool:
+        return self.status == EXPIRED
+
+
+def evaluate(info: CertInfo, warn_days: int = 30, now: Optional[datetime] = None) -> ExpiryStatus:
+    """Classify a certificate's validity relative to ``now``.
+
+    Returns an :class:`ExpiryStatus`. ``breach`` is True whenever the
+    certificate is not plainly valid, i.e. the CLI should exit non-zero.
+    The expiring boundary is strict: a cert exactly ``warn_days`` away
+    (whole days) is still ``valid``.
+    """
+    if info.not_after is None:
+        raise CertParseError("cert has no notAfter to evaluate")
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    days_until = (info.not_after - now).days
+
+    if now >= info.not_after:
+        status = EXPIRED
+    elif info.not_before is not None and now < info.not_before:
+        status = NOT_YET_VALID
+    elif days_until < warn_days:
+        status = EXPIRING
+    else:
+        status = VALID
+
+    return ExpiryStatus(
+        status=status,
+        days_until_expiry=days_until,
+        breach=status != VALID,
+        not_after=info.not_after,
+    )
+
+
+def status_report(info: CertInfo, status: ExpiryStatus) -> Dict:
+    """Build a JSON-serializable summary dict for one certificate."""
+    return {
+        "subject": info.subject,
+        "common_name": info.common_name,
+        "issuer": info.issuer,
+        "issuer_cn": info.issuer_cn,
+        "san": info.dns_names,
+        "serial_number": info.serial_number,
+        "not_before": info.not_before.isoformat() if info.not_before else None,
+        "not_after": info.not_after.isoformat() if info.not_after else None,
+        "days_until_expiry": status.days_until_expiry,
+        "status": status.status,
+        "breach": status.breach,
+    }
