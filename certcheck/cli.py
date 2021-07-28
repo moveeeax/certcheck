@@ -4,11 +4,22 @@ All the impure work lives here. Pure classification logic is in
 :mod:`certcheck.core`.
 """
 
+import argparse
+import json
 import os
 import socket
 import ssl
+import sys
 import tempfile
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from . import __version__
+from .core import (
+    CertParseError,
+    evaluate,
+    parse_cert,
+    status_report,
+)
 
 EXIT_OK = 0
 EXIT_BREACH = 1
@@ -115,3 +126,55 @@ def fetch_cert(host: str, port: int, timeout: float, insecure: bool = False) -> 
         raise CertCheckError("timed out connecting to %s:%s" % (host, port))
     except OSError as exc:
         raise CertCheckError("could not connect to %s:%s: %s" % (host, port, exc))
+
+
+def _one_target_report(label: str, raw_cert: Dict, warn_days: int) -> Dict:
+    info = parse_cert(raw_cert)
+    status = evaluate(info, warn_days=warn_days)
+    report = status_report(info, status)
+    report["target"] = label
+    return report
+
+
+def format_human(report: Dict) -> str:
+    lines = [
+        "Target:      %s" % report.get("target", "-"),
+        "Subject CN:  %s" % (report.get("common_name") or "-"),
+        "Issuer CN:   %s" % (report.get("issuer_cn") or "-"),
+        "SAN:         %s" % (", ".join(report.get("san") or []) or "-"),
+        "Not before:  %s" % (report.get("not_before") or "-"),
+        "Not after:   %s" % (report.get("not_after") or "-"),
+        "Days left:   %s" % report.get("days_until_expiry"),
+        "Status:      %s" % report.get("status"),
+    ]
+    return "\n".join(lines)
+
+
+def _emit_error(message: str, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({"error": message}), file=sys.stderr)
+    else:
+        print("error: %s" % message, file=sys.stderr)
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    try:
+        if args.file:
+            raw = decode_cert_file(args.file)
+            label = args.file
+        else:
+            if not args.target:
+                raise CertCheckError("a HOST[:PORT] or --file is required")
+            host, port = parse_target(args.target, args.port)
+            raw = fetch_cert(host, port, args.timeout, args.insecure)
+            label = "%s:%s" % (host, port)
+        report = _one_target_report(label, raw, args.warn_days)
+    except (CertCheckError, CertParseError) as exc:
+        _emit_error(str(exc), args.json)
+        return EXIT_ERROR
+
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(format_human(report))
+    return EXIT_BREACH if report["breach"] else EXIT_OK
