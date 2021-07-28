@@ -178,3 +178,107 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         print(format_human(report))
     return EXIT_BREACH if report["breach"] else EXIT_OK
+
+
+def _read_host_lines(path: str) -> List[str]:
+    if not os.path.exists(path):
+        raise CertCheckError("no such file: %s" % path)
+    hosts = []
+    with open(path, "r") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            hosts.append(line)
+    return hosts
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    try:
+        hosts = _read_host_lines(args.file)
+    except CertCheckError as exc:
+        _emit_error(str(exc), args.json)
+        return EXIT_ERROR
+
+    reports: List[Dict] = []
+    any_breach = False
+    any_error = False
+
+    for entry in hosts:
+        try:
+            host, port = parse_target(entry, args.port)
+            raw = fetch_cert(host, port, args.timeout, args.insecure)
+            report = _one_target_report("%s:%s" % (host, port), raw, args.warn_days)
+        except (CertCheckError, CertParseError) as exc:
+            any_error = True
+            reports.append(
+                {"target": entry, "status": "error", "error": str(exc), "breach": True}
+            )
+            continue
+        any_breach = any_breach or report["breach"]
+        reports.append(report)
+
+    if args.json:
+        print(json.dumps(reports, indent=2, sort_keys=True))
+    else:
+        for report in reports:
+            if report.get("status") == "error":
+                print("%s  ERROR  %s" % (report["target"], report.get("error")))
+            else:
+                print(
+                    "%s  %s  %s days"
+                    % (report["target"], report["status"].upper(),
+                       report["days_until_expiry"])
+                )
+
+    if any_error or any_breach:
+        return EXIT_BREACH
+    return EXIT_OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="certcheck",
+        description="Inspect TLS certificate expiry and details.",
+    )
+    parser.add_argument("--version", action="version",
+                        version="certcheck %s" % __version__)
+    sub = parser.add_subparsers(dest="command")
+
+    def add_common(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--warn-days", type=int, default=30,
+                        help="warn/fail if a cert expires within this many days (default 30)")
+        sp.add_argument("--timeout", type=float, default=10.0,
+                        help="connection timeout in seconds (default 10)")
+        sp.add_argument("--port", type=int, default=DEFAULT_PORT,
+                        help="default port when none given (default 443)")
+        sp.add_argument("--json", action="store_true", help="emit JSON output")
+        sp.add_argument("--insecure", action="store_true",
+                        help="skip certificate verification but still read the cert")
+
+    p_check = sub.add_parser("check", help="check a single host or PEM file")
+    p_check.add_argument("target", nargs="?", help="HOST[:PORT] to connect to")
+    p_check.add_argument("--file", help="inspect a local PEM file instead of connecting")
+    add_common(p_check)
+    p_check.set_defaults(func=cmd_check)
+
+    p_batch = sub.add_parser("batch", help="check many hosts listed in a file")
+    p_batch.add_argument("--file", required=True,
+                         help="file with one HOST[:PORT] per line")
+    add_common(p_batch)
+    p_batch.set_defaults(func=cmd_batch)
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        parser.print_help(sys.stderr)
+        return EXIT_ERROR
+    return args.func(args)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
