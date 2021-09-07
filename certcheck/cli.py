@@ -277,6 +277,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not getattr(args, "command", None):
         parser.print_help(sys.stderr)
         return EXIT_ERROR
+    if args.warn_days < 0:
+        _emit_error("--warn-days must be non-negative", getattr(args, "json", False))
+        return EXIT_ERROR
     return args.func(args)
 
 
