@@ -61,6 +61,22 @@ def test_batch_missing_file(capsys):
     assert rc == EXIT_ERROR
 
 
+def test_batch_tolerates_bom_in_hosts_file(server, tmp_path, capsys):
+    """A BOM must not get glued onto the first hostname.
+
+    Host lists are often edited on Windows; reading the file without an
+    explicit encoding left '\\ufeff' on the first entry, turning a good
+    host into an unresolvable one.
+    """
+    path = tmp_path / "hosts-bom.txt"
+    path.write_text("127.0.0.1:%d\n" % server.port, encoding="utf-8-sig")
+    assert path.read_bytes().startswith(b"\xef\xbb\xbf")
+    rc = main(["batch", "--file", str(path), "--insecure", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == EXIT_OK
+    assert payload[0]["status"] == "valid"
+
+
 def test_batch_human_output_format(server, tmp_path, capsys):
     hosts = _hosts_file(tmp_path, ["127.0.0.1:%d" % server.port])
     rc = main(["batch", "--file", hosts, "--insecure"])

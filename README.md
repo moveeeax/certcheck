@@ -7,7 +7,7 @@ until expiry, and exits non-zero when a certificate is expired or about
 to expire — handy for monitoring and CI checks.
 
 Runtime uses only the Python standard library (`ssl`, `socket`,
-`datetime`, `argparse`). Python 3.6+.
+`datetime`, `argparse`). Python 3.9+.
 
 ## Install
 
@@ -30,7 +30,8 @@ certcheck check example.com --warn-days 45 --timeout 5
 
 Exit status is `0` when the certificate is valid, `1` when it is
 expired or expiring within `--warn-days` (default 30), and `2` on an
-error (DNS failure, connection refused, unreadable file).
+error (DNS failure, connection refused, unreadable file, invalid
+option value).
 
 ### Inspect a local PEM file
 
@@ -59,9 +60,9 @@ certcheck batch --file hosts.txt --json
 
 | Flag | Description |
 | ---- | ----------- |
-| `--warn-days N` | Fail if a cert expires within N days (default 30). |
-| `--timeout S` | Connection timeout in seconds (default 10). |
-| `--port P` | Default port when none is given in the target (default 443). |
+| `--warn-days N` | Fail if a cert expires within N days (default 30). Must be >= 0. |
+| `--timeout S` | Connection timeout in seconds (default 10). Must be > 0. |
+| `--port P` | Default port when none is given in the target (default 443). Must be 1-65535. |
 | `--json` | Emit machine-readable JSON. |
 | `--insecure` | Skip verification but still read and report the cert (useful for self-signed certs). |
 

@@ -8,7 +8,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 def read_long_description():
     path = os.path.join(here, "README.md")
     if os.path.exists(path):
-        with open(path, "r") as handle:
+        with open(path, "r", encoding="utf-8") as handle:
             return handle.read()
     return ""
 
@@ -24,7 +24,7 @@ setup(
     license="MIT",
     url="https://github.com/moveeeax/certcheck",
     packages=find_packages(exclude=("tests", "tests.*")),
-    python_requires=">=3.6",
+    python_requires=">=3.9",
     entry_points={
         "console_scripts": [
             "certcheck=certcheck.cli:main",
@@ -37,6 +37,11 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
         "Topic :: System :: Networking :: Monitoring",
         "Topic :: Security",
     ],

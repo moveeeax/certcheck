@@ -1,1 +1,5 @@
-pytest==6.2.4
+# pytest 6.2.x cannot even be imported on Python 3.12+ (its assertion
+# rewriter uses ast.Str, removed in 3.12), so the floor is a release that
+# supports current interpreters. Upper bound guards against a major bump
+# landing unreviewed in CI.
+pytest>=7.4,<9
