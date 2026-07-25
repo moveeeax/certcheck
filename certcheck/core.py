@@ -20,22 +20,57 @@ class CertParseError(ValueError):
     """Raised when a certificate dict cannot be understood."""
 
 
+MONTH_ABBRS = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+_MONTHS = {name: number for number, name in enumerate(MONTH_ABBRS, start=1)}
+
+
 def parse_asn1_time(value: str) -> datetime:
     """Parse an OpenSSL ASN.1 time string into an aware UTC datetime.
 
     Example input: ``'Jun  1 12:00:00 2021 GMT'`` (note the padding
     space for single-digit days).
+
+    The month is resolved through an explicit English table rather than
+    ``strptime``'s ``%b``, which follows ``LC_TIME``. OpenSSL always
+    emits English month abbreviations, so parsing them must not be
+    localized: a process that has called ``locale.setlocale`` for a
+    non-English locale -- as an application embedding this package may
+    well have done -- otherwise fails to parse every certificate.
+    (Environment variables alone do not trigger this, since Python
+    leaves ``LC_TIME`` at ``C`` unless asked otherwise.)
     """
     if not value:
         raise CertParseError("empty time value")
     text = value.strip()
     if text.endswith(" GMT") or text.endswith(" UTC"):
         text = text[:-4].strip()
+
+    parts = text.split()
+    if len(parts) != 4:
+        raise CertParseError("bad time value: %r" % value)
+    month_name, day_text, clock, year_text = parts
+
+    month = _MONTHS.get(month_name)
+    if month is None:
+        raise CertParseError("bad time value: %r" % value)
+
     try:
-        dt = datetime.strptime(text, "%b %d %H:%M:%S %Y")
+        hour_text, minute_text, second_text = clock.split(":")
+        return datetime(
+            int(year_text),
+            month,
+            int(day_text),
+            int(hour_text),
+            int(minute_text),
+            int(second_text),
+            tzinfo=timezone.utc,
+        )
     except ValueError as exc:
         raise CertParseError("bad time value: %r" % value) from exc
-    return dt.replace(tzinfo=timezone.utc)
 
 
 def _name_to_dict(rdns) -> Dict[str, str]:

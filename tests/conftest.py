@@ -5,10 +5,20 @@ from datetime import datetime, timezone
 
 import pytest
 
+from certcheck.core import MONTH_ABBRS
+
 
 def asn1_time(dt: datetime) -> str:
-    """Render a datetime as an OpenSSL-style ASN.1 GMT time string."""
-    return dt.strftime("%b %e %H:%M:%S %Y GMT").replace("  ", " ")
+    """Render a datetime as an OpenSSL-style ASN.1 GMT time string.
+
+    Built from an explicit English month table, not ``strftime('%b')``,
+    so the fixture reproduces what OpenSSL actually emits and does not
+    drift if a test changes ``LC_TIME``. Single-digit days keep their
+    padding space, as in ``'Jun  1 12:00:00 2021 GMT'``.
+    """
+    return "%s %2d %02d:%02d:%02d %04d GMT" % (
+        MONTH_ABBRS[dt.month - 1], dt.day, dt.hour, dt.minute, dt.second, dt.year,
+    )
 
 
 def make_cert_dict(not_before: datetime, not_after: datetime, cn="example.test",

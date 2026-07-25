@@ -26,6 +26,8 @@ EXIT_BREACH = 1
 EXIT_ERROR = 2
 
 DEFAULT_PORT = 443
+MIN_PORT = 1
+MAX_PORT = 65535
 
 
 class CertCheckError(Exception):
@@ -65,7 +67,7 @@ def _parse_port(port_text: str, original: str) -> int:
         port = int(port_text)
     except ValueError:
         raise CertCheckError("invalid port in %r" % original)
-    if not (0 < port < 65536):
+    if not (MIN_PORT <= port <= MAX_PORT):
         raise CertCheckError("port out of range in %r" % original)
     return port
 
@@ -184,7 +186,10 @@ def _read_host_lines(path: str) -> List[str]:
     if not os.path.exists(path):
         raise CertCheckError("no such file: %s" % path)
     hosts = []
-    with open(path, "r") as handle:
+    # utf-8-sig so a byte-order mark left by a Windows editor does not
+    # end up glued to the first hostname; without an explicit encoding
+    # the read would also follow the ambient locale.
+    with open(path, "r", encoding="utf-8-sig") as handle:
         for line in handle:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -271,14 +276,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_common_args(args: argparse.Namespace) -> Optional[str]:
+    """Return an error message for out-of-range shared options, else None.
+
+    ``--timeout`` and ``--port`` are checked here because passing them
+    straight to :func:`socket.create_connection` turns bad input into an
+    unhandled traceback (a non-positive timeout raises ``ValueError``)
+    or a misleading DNS error (an out-of-range port), instead of the
+    clear message and exit code 2 the CLI promises.
+    """
+    if args.warn_days < 0:
+        return "--warn-days must be non-negative"
+    if not args.timeout > 0:
+        return "--timeout must be greater than 0"
+    if not (MIN_PORT <= args.port <= MAX_PORT):
+        return "--port must be between %d and %d" % (MIN_PORT, MAX_PORT)
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help(sys.stderr)
         return EXIT_ERROR
-    if args.warn_days < 0:
-        _emit_error("--warn-days must be non-negative", getattr(args, "json", False))
+    problem = validate_common_args(args)
+    if problem is not None:
+        _emit_error(problem, getattr(args, "json", False))
         return EXIT_ERROR
     return args.func(args)
 
