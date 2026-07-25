@@ -2,4 +2,4 @@
 # rewriter uses ast.Str, removed in 3.12), so the floor is a release that
 # supports current interpreters. Upper bound guards against a major bump
 # landing unreviewed in CI.
-pytest>=7.4,<9
+pytest>=9.1.1,<10
