@@ -49,9 +49,13 @@ def parse_target(target: str, default_port: int = DEFAULT_PORT) -> Tuple[str, in
         host, sep, rest = text[1:].partition("]")
         if not sep:
             raise CertCheckError("unbalanced brackets in %r" % target)
+        if not host:
+            raise CertCheckError("missing host in %r" % target)
+        if not rest:
+            return host, default_port
         if rest.startswith(":"):
             return host, _parse_port(rest[1:], target)
-        return host, default_port
+        raise CertCheckError("unexpected text after ']' in %r" % target)
 
     if text.count(":") == 1:
         host, _, port_text = text.partition(":")
