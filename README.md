@@ -7,7 +7,7 @@ until expiry, and exits non-zero when a certificate is expired or about
 to expire — handy for monitoring and CI checks.
 
 Runtime uses only the Python standard library (`ssl`, `socket`,
-`datetime`, `argparse`). Python 3.9+.
+`datetime`, `argparse`). Python 3.11+.
 
 ## Install
 
