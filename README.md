@@ -12,8 +12,11 @@ Runtime uses only the Python standard library (`ssl`, `socket`,
 ## Install
 
 ```sh
-pip install -e .
+pip install git+https://github.com/moveeeax/certcheck.git
 ```
+
+To pin a version, append `@<tag-or-commit>` to the URL. From a
+local clone, `pip install .` (or `pip install -e .` for development).
 
 This exposes a `certcheck` console command. You can also run it as a
 module: `python -m certcheck ...`.
@@ -68,15 +71,18 @@ certcheck batch --file hosts.txt --json
 
 ## Example
 
+Illustrative output, run on 2026-11-04 (days left are whole days from now
+until `Not after`):
+
 ```sh
 $ certcheck check example.com
 Target:      example.com:443
 Subject CN:  example.com
 Issuer CN:   DigiCert TLS RSA SHA256 2020 CA1
 SAN:         example.com, www.example.com
-Not before:  2021-03-01T00:00:00+00:00
-Not after:   2022-03-01T23:59:59+00:00
-Days left:   180
+Not before:  2026-01-15T00:00:00+00:00
+Not after:   2027-01-15T23:59:59+00:00
+Days left:   72
 Status:      valid
 ```
 
