@@ -14,6 +14,28 @@ VALID = "valid"
 EXPIRING = "expiring"
 EXPIRED = "expired"
 NOT_YET_VALID = "not_yet_valid"
+UNTRUSTED = "untrusted"
+HOSTNAME_MISMATCH = "hostname_mismatch"
+
+# OpenSSL X509_V_ERR_* verify codes (include/openssl/x509_vfy.h) that the
+# trust and chain checks tell apart. ssl.SSLCertVerificationError carries
+# them as ``verify_code``.
+X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT = 2
+X509_V_ERR_CERT_NOT_YET_VALID = 9
+X509_V_ERR_CERT_HAS_EXPIRED = 10
+X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT = 18
+X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN = 19
+X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY = 20
+X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE = 21
+X509_V_ERR_HOSTNAME_MISMATCH = 62
+X509_V_ERR_IP_ADDRESS_MISMATCH = 64
+
+_NAME_MISMATCH_CODES = (X509_V_ERR_HOSTNAME_MISMATCH, X509_V_ERR_IP_ADDRESS_MISMATCH)
+_MISSING_ISSUER_CODES = (
+    X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT,
+    X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+    X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE,
+)
 
 
 class CertParseError(ValueError):
@@ -110,6 +132,11 @@ class CertInfo:
     def dns_names(self) -> List[str]:
         return [val for (kind, val) in self.san if kind == "DNS"]
 
+    @property
+    def self_signed(self) -> bool:
+        """True when subject and issuer names are identical."""
+        return bool(self.subject) and self.subject == self.issuer
+
 
 def parse_cert(cert: Dict) -> CertInfo:
     """Turn a getpeercert-style dict into a :class:`CertInfo`."""
@@ -178,6 +205,29 @@ def evaluate(info: CertInfo, warn_days: int = 30, now: Optional[datetime] = None
     )
 
 
+def apply_verify_failure(status: ExpiryStatus, verify_code: Optional[int]) -> ExpiryStatus:
+    """Fold a failed TLS verification into an expiry classification.
+
+    The dates win when they already explain the failure: an expired or
+    not-yet-valid certificate keeps that status. Otherwise a name
+    mismatch becomes ``hostname_mismatch`` and any other trust failure
+    (self-signed, unknown issuer, expired intermediate) ``untrusted``.
+    The result is always a breach.
+    """
+    if status.status in (EXPIRED, NOT_YET_VALID):
+        new_status = status.status
+    elif verify_code in _NAME_MISMATCH_CODES:
+        new_status = HOSTNAME_MISMATCH
+    else:
+        new_status = UNTRUSTED
+    return ExpiryStatus(
+        status=new_status,
+        days_until_expiry=status.days_until_expiry,
+        breach=True,
+        not_after=status.not_after,
+    )
+
+
 def status_report(info: CertInfo, status: ExpiryStatus) -> Dict:
     """Build a JSON-serializable summary dict for one certificate."""
     return {
@@ -193,3 +243,89 @@ def status_report(info: CertInfo, status: ExpiryStatus) -> Dict:
         "status": status.status,
         "breach": status.breach,
     }
+
+
+def chain_findings(
+    chain: List[Tuple[CertInfo, ExpiryStatus]],
+    verify_code: Optional[int] = None,
+    verify_error: Optional[str] = None,
+    check_trust: bool = True,
+) -> List[Dict[str, str]]:
+    """List problems with a presented chain, leaf first.
+
+    ``chain`` pairs each presented certificate with its evaluation.
+    Certificates above the leaf that are not plainly valid are reported
+    as ``chain_<status>``; the leaf's own expiry is already in its
+    status. With ``check_trust``, a failed verification (``verify_code``)
+    is mapped to ``self_signed``, ``hostname_mismatch``,
+    ``incomplete_chain`` or ``untrusted`` (described by
+    ``verify_error``). A self-signed leaf that verified, for example
+    against ``--ca-file``, is not a finding. Each finding is a dict with
+    ``check`` and ``detail``.
+    """
+    findings: List[Dict[str, str]] = []
+    for depth, (info, status) in enumerate(chain):
+        if depth == 0 or status.status == VALID:
+            continue
+        findings.append({
+            "check": "chain_" + status.status,
+            "detail": "chain certificate %d (%s) is %s, %d days left"
+            % (depth, info.common_name or "-", status.status, status.days_until_expiry),
+        })
+
+    if not check_trust or verify_code is None:
+        return findings
+
+    leaf_self_signed = bool(chain) and chain[0][0].self_signed
+    if leaf_self_signed:
+        findings.append({"check": "self_signed", "detail": "leaf certificate is self-signed"})
+    if verify_code in _NAME_MISMATCH_CODES:
+        findings.append({
+            "check": "hostname_mismatch",
+            "detail": "certificate does not cover the requested host name",
+        })
+    elif verify_code in _MISSING_ISSUER_CODES and not leaf_self_signed:
+        last = chain[-1][0].common_name if chain else None
+        findings.append({
+            "check": "incomplete_chain",
+            "detail": "issuer of %s was not presented and is not in the trust store"
+            % (last or "the last presented certificate"),
+        })
+    elif verify_code in (X509_V_ERR_CERT_HAS_EXPIRED, X509_V_ERR_CERT_NOT_YET_VALID) and any(
+        status.status in (EXPIRED, NOT_YET_VALID) for _, status in chain
+    ):
+        pass  # the leaf status or a chain_expired finding already says so
+    elif not (leaf_self_signed and verify_code == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT):
+        findings.append({
+            "check": "untrusted",
+            "detail": verify_error or "verification failed (code %d)" % verify_code,
+        })
+    return findings
+
+
+# Key-exchange labels from ssl.SSLContext.get_ciphers() ("kea") that give
+# forward secrecy. "kx-any" is how OpenSSL labels TLS 1.3 suites, whose key
+# exchange is always ephemeral.
+_FORWARD_SECRET_KEA = ("kx-ecdhe", "kx-dhe", "kx-any", "kx-ecdhepsk", "kx-dhepsk")
+
+
+def forward_secret(kea: Optional[str]) -> bool:
+    """Whether a cipher's key exchange (``get_ciphers()['kea']``) is ephemeral."""
+    return kea in _FORWARD_SECRET_KEA
+
+
+TLS_VERSIONS = ("TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3")
+
+
+def protocol_findings(accepted: Dict[str, Optional[bool]], min_version: str) -> List[Dict[str, str]]:
+    """Report every accepted protocol version older than ``min_version``.
+
+    ``accepted`` maps names from :data:`TLS_VERSIONS` to True (handshake
+    succeeded), False (refused) or None (could not be tested).
+    """
+    floor = TLS_VERSIONS.index(min_version)
+    return [
+        {"check": "protocol", "detail": "%s accepted, policy minimum is %s" % (name, min_version)}
+        for name in TLS_VERSIONS[:floor]
+        if accepted.get(name) is True
+    ]

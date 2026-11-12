@@ -72,3 +72,59 @@ def now_utc():
 def openssl_required():
     if not _openssl_available():
         pytest.skip("openssl binary not available")
+
+
+def _openssl(*args):
+    subprocess.run(["openssl", *args], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def write_ca_chain(path_dir, leaf_cn="127.0.0.1", leaf_san="IP:127.0.0.1"):
+    """Create root -> intermediate -> leaf certificates and return their paths.
+
+    Returns a dict with ``root``, ``intermediate``, ``leaf``, ``leaf_key``
+    and ``bundle`` (leaf followed by the intermediate, as a server would
+    present it). Extensions are set explicitly through ``-extfile`` so
+    the result verifies under Python's strict default context with the
+    OpenSSL 3.0 that CI runners ship.
+    """
+    d = path_dir
+    ca_ext = d / "ca.ext"
+    ca_ext.write_text(
+        "basicConstraints=critical,CA:TRUE\n"
+        "keyUsage=critical,keyCertSign,cRLSign\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always\n"
+    )
+    leaf_ext = d / "leaf.ext"
+    leaf_ext.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always\n"
+        "subjectAltName=%s\n" % leaf_san
+    )
+    paths = {name: str(d / ("%s.pem" % name)) for name in ("root", "intermediate", "leaf")}
+    keys = {name: str(d / ("%s.key" % name)) for name in ("root", "intermediate", "leaf")}
+
+    _openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", keys["root"],
+             "-out", paths["root"], "-days", "3650", "-subj", "/CN=Test Root CA",
+             "-addext", "basicConstraints=critical,CA:TRUE",
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+    for name, issuer, cn, ext, days in (
+        ("intermediate", "root", "Test Intermediate CA", ca_ext, "1825"),
+        ("leaf", "intermediate", leaf_cn, leaf_ext, "365"),
+    ):
+        csr = str(d / ("%s.csr" % name))
+        _openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", keys[name],
+                 "-out", csr, "-subj", "/CN=%s" % cn)
+        _openssl("x509", "-req", "-in", csr, "-CA", paths[issuer], "-CAkey", keys[issuer],
+                 "-CAcreateserial", "-out", paths[name], "-days", days,
+                 "-extfile", str(ext))
+
+    bundle = d / "bundle.pem"
+    bundle.write_text(open(paths["leaf"]).read() + open(paths["intermediate"]).read())
+    paths["leaf_key"] = keys["leaf"]
+    paths["bundle"] = str(bundle)
+    return paths
