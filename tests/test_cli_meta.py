@@ -19,8 +19,8 @@ def test_help_flag(capsys):
         main(["--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "check" in out
-    assert "batch" in out
+    for command in ("check", "batch", "inventory", "k8s"):
+        assert command in out
 
 
 def test_negative_warn_days_rejected(tmp_path, openssl_required, capsys):

@@ -84,3 +84,13 @@ def test_batch_human_output_format(server, tmp_path, capsys):
     assert rc == EXIT_OK
     assert "VALID" in out
     assert "days" in out
+
+
+def test_batch_reports_untrusted_without_insecure(server, tmp_path, capsys):
+    hosts = _hosts_file(tmp_path, ["127.0.0.1:%d" % server.port])
+    rc = main(["batch", "--file", hosts, "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == EXIT_BREACH
+    assert payload[0]["status"] == "untrusted"
+    assert payload[0]["days_until_expiry"] > 300
+    assert payload[0]["verify_error"]
